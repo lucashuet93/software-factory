@@ -75,7 +75,8 @@ def avatar_config(spec: str) -> dict:
         "type": "video-avatar",
         "character": character,
         "customized": False,
-        # A portrait crop of the 1080p frame on a steel background that matches the app.
+        # A portrait crop of the 1080p frame on a steel background that matches the app. Avatar styles that render
+        # natively in portrait (1080x1920) reject this resolution.
         "video": {"codec": "h264", "bitrate": 1_000_000, "resolution": {"width": 1920, "height": 1080},
                   "crop": {"top_left": [560, 0], "bottom_right": [1360, 1080]},
                   "background": {"color": "#262A30FF"}},
