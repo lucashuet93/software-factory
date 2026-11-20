@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { api } from "../api";
+import { Gear } from "../Icons";
 
 export default function NewProject() {
   const [form, setForm] = useState({ name: "", description: "", repo_url: "", pat: "", brd: "" });
@@ -28,8 +29,13 @@ export default function NewProject() {
 
   return (
     <section className="narrow">
-      <h1>New project</h1>
-      <form onSubmit={submit} className="form">
+      <div className="page-head">
+        <div>
+          <p className="eyebrow"><a href="#/">Factory floor</a> / new line</p>
+          <h1><Gear size={26} /> New project</h1>
+        </div>
+      </div>
+      <form onSubmit={submit} className="form panel">
         <label>Project name<input required value={form.name} onChange={set("name")} /></label>
         <label>Short description<input value={form.description} onChange={set("description")} /></label>
         <label>

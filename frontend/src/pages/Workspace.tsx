@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Message, type ProjectDetail, type Task } from "../api";
 import Markdown from "../Markdown";
+import { Gear } from "../Icons";
 import { deliveryLabel } from "./ProjectList";
 
 const TABS = ["chat", "brd", "backlog", "settings"] as const;
@@ -48,13 +49,15 @@ export default function Workspace({ id }: { id: string }) {
   }, [id, loadProject, loadMessages]);
 
   if (error) return <div className="banner blocked">{error}</div>;
-  if (!project) return <p className="muted">Loading...</p>;
+  if (!project) return <div className="loading"><Gear size={22} spin /> Loading project...</div>;
 
   return (
     <section>
-      <div className="row between">
+      <div className="page-head">
         <div>
-          <h1>{project.name}</h1>
+          <p className="eyebrow"><a href="#/">Factory floor</a> / {project.repo_owner}/{project.repo_name}</p>
+          <h1><Gear size={26} spin={(project.task_counts.dispatched ?? 0) + (project.task_counts.reviewing ?? 0)
+            + (project.task_counts.remediating ?? 0) > 0} /> {project.name}</h1>
           <p className="muted">{project.description}</p>
         </div>
         <div className="stack-right">
@@ -114,7 +117,7 @@ function EventNote({ content }: { content: string }) {
   const details = rest.join("\n").trim();
   return (
     <div className="msg event">
-      <div className="who">Software Factory</div>
+      <div className="who"><Gear size={12} /> Software Factory</div>
       <Markdown text={summary} />
       {details && (
         <>
@@ -129,10 +132,11 @@ function EventNote({ content }: { content: string }) {
 function Chat({ id, messages, thinking, onSent }: { id: string; messages: Message[]; thinking: boolean; onSent: () => void }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
-  const endRef = useRef<HTMLDivElement>(null);
-  // Braces matter: newer browsers return a Promise from scrollIntoView, which React would call as a cleanup.
+  const listRef = useRef<HTMLDivElement>(null);
+  // Scroll only the message list, so new messages never scroll the whole page past the header.
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = listRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [messages, thinking]);
 
   async function send() {
@@ -148,19 +152,21 @@ function Chat({ id, messages, thinking, onSent }: { id: string; messages: Messag
   }
 
   return (
-    <div className="chat">
-      <div className="messages">
+    <div className="chat panel">
+      <div className="messages" ref={listRef}>
         {messages.length === 0 && (
-          <p className="muted">Start by asking the lead engineer to review your BRD and propose a plan.</p>
+          <div className="empty">
+            <Gear size={48} teeth={10} />
+            <p>Start by asking the lead engineer to review your BRD and propose a plan.</p>
+          </div>
         )}
         {messages.map((m) => m.role === "event" ? <EventNote key={m.id} content={m.content} /> : (
           <div key={m.id} className={`msg ${m.role}`}>
-            <div className="who">{m.role === "user" ? "You" : "Lead engineer"}</div>
+            <div className="who">{m.role === "user" ? "You" : <><Gear size={12} /> Lead engineer</>}</div>
             <Markdown text={m.content} />
           </div>
         ))}
-        {thinking && <div className="msg assistant thinking">Lead engineer is working...</div>}
-        <div ref={endRef} />
+        {thinking && <div className="msg assistant thinking"><Gear size={18} spin /> Lead engineer is working...</div>}
       </div>
       <div className="composer">
         <textarea rows={3} value={text} placeholder="Message the lead engineer"
@@ -186,7 +192,7 @@ function Brd({ id, version }: { id: string; version: number }) {
     setEditing(false);
   }
 
-  if (content === null) return <p className="muted">Loading...</p>;
+  if (content === null) return <div className="loading"><Gear size={22} spin /> Loading BRD...</div>;
   return (
     <div className="panel">
       <div className="row between">
@@ -223,13 +229,15 @@ function Backlog({ project }: { project: ProjectDetail }) {
         {!project.delivery_started && project.tasks.length > 0 && (
           <p className="hint">Delivery has not started. Tell the lead engineer to proceed when you are ready.</p>
         )}
-        {project.tasks.length === 0 ? <p className="muted">No tasks yet. Ask the lead engineer to plan the work.</p> : (
+        {project.tasks.length === 0 ? (
+          <div className="empty"><Gear size={48} teeth={10} /><p>No tasks yet. Ask the lead engineer to plan the work.</p></div>
+        ) : (
           <table>
             <thead><tr><th>Task</th><th>Status</th><th>GitHub</th><th>Detail</th></tr></thead>
             <tbody>
               {project.tasks.map((t) => (
                 <tr key={t.key}>
-                  <td><strong>{t.key}</strong> {t.title}
+                  <td><span className="task-key">{t.key}</span>{t.title}
                     {t.depends_on.length > 0 && <div className="muted small">after {t.depends_on.join(", ")}</div>}</td>
                   <td><span className={`pill state-${t.state}`}>{STATE_LABEL[t.state]}</span>
                     {(t.attempt > 1 || t.state === "blocked") && (
@@ -290,6 +298,7 @@ function Settings({ project, onChange }: { project: ProjectDetail; onChange: () 
           ))}
         </ul>
         <button className="primary" onClick={setup} disabled={running}>
+          <Gear size={16} spin={running} />
           {running ? "Running setup..." : project.checklist.length ? "Re-run setup" : "Run setup"}
         </button>
       </div>
@@ -354,7 +363,7 @@ function DeleteProject({ project }: { project: ProjectDetail }) {
           but Software Factory will stop reviewing and merging them.
         </p>
       )}
-      <label>Type <code>{project.name}</code> to confirm
+      <label><span>Type <code>{project.name}</code> to confirm</span>
         <div className="row">
           <input value={confirmName} onChange={(e) => setConfirmName(e.target.value)} autoComplete="off" />
           <button className="danger" disabled={busy || confirmName !== project.name} onClick={remove}>
