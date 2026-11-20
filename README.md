@@ -55,6 +55,18 @@ The script installs dependencies on first run, builds the UI, starts the server 
 3. In **Chat**, ask the lead engineer to review the BRD and plan the work.
 4. Tell the lead engineer to proceed. Track progress in **Backlog**.
 
+Once delivery starts, Software Factory runs the pull request loop and tells the lead engineer
+when a task merges or gets stuck:
+
+* Copilot review findings rated High or Medium go back to Copilot, for up to three fix-up rounds
+  per attempt. Low findings don't block the merge; they become one follow-up task.
+* After each merge, the lead engineer reviews the PR's output and adds follow-up tasks if
+  required work remains.
+* When an attempt gets stuck, the lead engineer rewrites the issue using Copilot's review
+  comments and starts a fresh attempt, up to three attempts per task.
+* After three failed attempts, the project shows **Needs attention**. Chat with the lead
+  engineer to agree on a rewrite or new tasks; it can retry again once you agree.
+
 Press Ctrl+C in the terminal to stop the app. Work already assigned to Copilot continues on
 GitHub, and the app catches up when you start it again.
 

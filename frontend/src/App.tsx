@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type Health } from "./api";
+import { Logo } from "./Icons";
 import ProjectList from "./pages/ProjectList";
 import NewProject from "./pages/NewProject";
 import Workspace from "./pages/Workspace";
@@ -34,9 +35,13 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <a href="#/" className="brand">Software Factory</a>
-        <span className={`pill ${health?.foundry.ok ? "ok" : "blocked"}`} title={health?.foundry.detail ?? "Backend unreachable"}>
-          Foundry: {health ? (health.foundry.ok ? "connected" : "not connected") : "unreachable"}
+        <a href="#/" className="brand">
+          <Logo size={30} />
+          <span className="brand-name">Software Factory<small>Foundry lead · Copilot crew</small></span>
+        </a>
+        <span className={`status-light ${health?.foundry.ok ? "ok" : ""}`} title={health?.foundry.detail ?? "Backend unreachable"}>
+          <span className="lamp" />
+          Foundry {health ? (health.foundry.ok ? "online" : "offline") : "unreachable"}
         </span>
       </header>
       {health && !health.foundry.ok && (

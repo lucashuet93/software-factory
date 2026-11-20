@@ -80,8 +80,11 @@ situational awareness.
 
 It also performs the PR lifecycle actions that Copilot cannot perform for itself: moving
 Copilot draft PRs to ready for review, requesting Copilot code review, approving a PR once
-Copilot code review reports no outstanding findings, and merging eligible PRs. Sections 7.4
+Copilot code review reports no blocking findings, and merging eligible PRs. Sections 7.4
 and 7.5 define the policies for these actions.
+
+When an attempt fails or a PR merges, the lead agent is notified through a delivery event. It
+rewrites blocked tasks for fresh attempts and creates follow-up tasks (sections 7.6 and 7.7).
 
 It must not author application code, form its own code-review verdicts, dismiss or override
 Copilot findings, or invent test results. Its approval reflects Copilot's review outcome and
@@ -152,7 +155,10 @@ Opening a project exposes:
 * The BRD as rendered Markdown with editing
 * A backlog view showing tasks, board status, assigned Copilot work, PR and review state,
   and blockers
-* Settings showing the repository, board link, PAT status, and parallel task limit
+* Settings showing the repository, board link, PAT status, and parallel task limit, plus project
+  deletion. Deleting requires typing the project name, removes only local data (database rows,
+  documents, and the stored PAT), and explains that GitHub resources and running Copilot work
+  remain
 
 ### 5.5 Start delivery
 
@@ -251,13 +257,16 @@ toward the task's remediation limit.
 3. Move the PR from draft to ready for review. Copilot cannot mark its own PRs ready.
 4. Start any GitHub Actions workflow runs that GitHub held for approval on the current head.
 5. Request Copilot code review for the current head, or observe a ruleset-triggered review.
-6. Collect review findings and required-check results for the current head.
-7. If findings or failures exist, post a PR comment that mentions `@copilot` and restates
-   each finding with its file, line, severity, and text.
-8. Confirm that a remediation session started, using the eyes reaction on the comment, the
-   "Copilot has started work" timeline event, or new commits.
+6. Collect review findings and required-check results for the current head. Copilot rates each
+   inline comment High, Medium, or Low through the comment's `copilot_code_review_severity`
+   field. Low comments are deferred (section 7.6); High, Medium, and unrated comments block.
+7. If blocking findings or failures exist, post a PR comment that mentions `@copilot` and
+   restates each finding with its file, line, severity, and text.
+8. Confirm that a remediation session started, using the agent tasks API or new commits. For
+   20 minutes after the request, an unchanged head counts as "not started yet", so the same
+   commit is never re-reviewed and a cycle is not wasted.
 9. After that session finishes, return to step 4 for the new head.
-10. Block the task with a visible explanation when the remediation limit is reached.
+10. Block the attempt when findings remain after the remediation limit (section 7.7).
 
 Replies to individual Copilot review comments are not visible to Copilot and do not start a
 coding session, so remediation always uses a PR-level `@copilot` comment. Copilot acts only on
@@ -274,15 +283,15 @@ repository's Copilot cloud agent settings avoids the delay. Either way, unreview
 runs in CI with access to repository secrets; an owner-confirmation guard for workflow-file
 changes is deferred to section 16.
 
-Proposed default: at most three remediation cycles per task. Persistent failures, missing
-credentials, and exhausted Copilot quota are surfaced explicitly.
+Each attempt gets at most three remediation cycles. Persistent failures, missing credentials,
+and exhausted Copilot quota are surfaced explicitly.
 
 ### 7.5 Approve and merge
 
 The service merges a PR into `main` only when every gate passes:
 
 * Required checks have succeeded for the current head, and no workflow run is held for approval
-* The latest Copilot review of the current head added no findings
+* The latest Copilot review of the current head added no blocking findings
 * An approval for the current head exists through one of the approval paths below
 * All GitHub repository rules are satisfied
 * The PR targets `main`, is not a draft, and is mergeable
@@ -296,13 +305,13 @@ A PR is approved through one of these paths, in order of preference:
 1. Copilot submits an approving review for the current head, when Copilot approvals are
    enabled and count toward merge requirements.
 2. The lead agent approves the PR when Copilot's latest completed review of the current head
-   leaves no unresolved findings, for example a review with no comments or an overview stating
-   that the PR is ready to approve ("LGTM" or equivalent).
+   leaves no blocking findings, for example a review with no comments, only Low comments, or an
+   overview stating that the PR is ready to approve ("LGTM" or equivalent).
 
 The service does not need to know in advance whether Copilot approvals are available. It uses
 path 1 when an approving Copilot review exists for the current head and otherwise applies
 path 2. Lead-agent approval is a service-enforced gate, not model discretion: the service
-verifies that the review's commit SHA matches the head, that the review added no inline
+verifies that the review's commit SHA matches the head, that the review added no blocking inline
 comments, and that required checks passed. Copilot re-reviews the whole PR after each
 remediation, so findings from earlier reviews that it does not repeat are treated as addressed.
 An "LGTM" summary never overrides inline findings.
@@ -318,7 +327,55 @@ A task is delivered only when its PR has merged into `main`. The agent reports w
 merged, in review, or blocked, and never equates an open PR or a finished Copilot session
 with delivered work. Merged code is not deployed software.
 
-### 7.6 Requirement changes
+### 7.6 Follow-up work from merged PRs
+
+After every merge, the service posts a delivery event to the project chat and starts a lead
+agent turn. The event carries the PR description, changed files, Copilot's review summary, and
+any deferred Low findings. Text written by Copilot is marked as untrusted data.
+
+* If deferred Low findings exist, the service itself creates one follow-up task that lists
+  them, depends on the merged task, and is dispatched like any other task. Low findings on a
+  follow-up task's own PR do not create another automatic follow-up, which prevents endless
+  chains of minor fixes; the agent decides whether they matter.
+* The agent creates further follow-up tasks only for required work within the approved BRD:
+  work the PR reports as incomplete, or acceptance criteria it did not meet. It checks existing
+  tasks to avoid duplicates and asks the customer before anything that expands scope.
+
+### 7.7 Blocked tasks and fresh attempts
+
+Each task gets up to three Copilot attempts, and each attempt gets up to three remediation
+cycles. An attempt is blocked when findings remain after the remediation limit, Copilot opens
+no PR within 60 minutes, the PR is closed without merging, a review cannot be requested, or
+the issue is closed outside Software Factory.
+
+When an attempt is blocked, the service records the reason, the unresolved findings, and the
+full Copilot review history of the PR (every review summary and inline comment, plus failed
+checks). It then posts a delivery event with that history and starts a lead agent turn.
+
+* While attempts remain, the agent diagnoses why Copilot could not satisfy the review and calls
+  `retry_task` with a rewritten brief and notes on what went wrong. A missing prerequisite may
+  be added first as a separate task; the blocked task's own scope is never split into new
+  tasks. Blockers a rewrite cannot fix, such as exhausted quota or missing permissions, are
+  explained to the customer instead.
+* `retry_task` starts fresh: it closes the abandoned PR with an explanation, rewrites the issue
+  (adding a "Notes from previous attempts" section that accumulates across attempts), reopens
+  it if needed, unassigns Copilot, and requeues the task. The next dispatch assigns Copilot
+  again with instructions that name the attempt number and the abandoned PRs. Abandoned PRs
+  never count as work in progress and are never picked up again as the task's PR.
+* After the third failed attempt, the service refuses automatic retries. The task stays
+  blocked, the project shows "Needs attention", and the workspace names the task and links to
+  chat. The agent explains the blocker and proposes a way forward. A retry beyond the limit is
+  accepted only in a turn where the customer has spoken since the agent's last reply; the
+  service enforces this, not the model. Each customer-approved retry gets another full attempt.
+
+Dependents of a blocked task wait until it merges. Merging a blocked task's PR manually is not
+detected; recovery always goes through a retry.
+
+Delivery events are stored as their own message role, shown in chat as collapsible notes, and
+labeled for the model as not coming from the customer. Events that arrive while the agent is
+busy are batched into the next turn, and no event is skipped.
+
+### 7.8 Requirement changes
 
 In the MVP, a BRD change affects only tasks that have not been assigned. The lead agent may
 revise or reprioritize those tasks and create new ones. It does not edit issues already
@@ -332,10 +389,10 @@ Sources of truth:
 * GitHub defines issue, board, PR, check, review, and merge state.
 * SQLite stores conversations, project settings, task-to-issue mappings, and cached snapshots.
 
-While the application runs, a backend worker polls GitHub for each active project and invokes
-the lead agent when new information requires action, such as a finished Copilot session, a
-completed review, failed checks, or a merge. Most polls need no model call. Proposed default:
-poll every 60 seconds with rate-limit-aware backoff, plus a manual refresh.
+While the application runs, a backend worker polls GitHub for each active project. The worker
+itself makes no model calls; it starts a lead agent turn only through delivery events, when a
+task merges or an attempt is blocked (sections 7.6 and 7.7). Proposed default: poll every 60
+seconds with rate-limit-aware backoff, plus a manual refresh.
 
 While the application is stopped, Copilot sessions and CI continue on GitHub, but no dispatch,
 remediation, or merge occurs. On restart, the worker refreshes each project's state from
@@ -381,6 +438,8 @@ Provide typed tools for:
 * Reading and writing project documents
 * Reading repository context
 * Creating and updating task issues and board fields
+* Reading a task's full record, including the Copilot review history of a failed attempt
+* Retrying a blocked task with a rewritten brief (section 7.7)
 * Assigning issues to Copilot
 * Reading PRs, checks, and reviews
 * Requesting Copilot review
@@ -523,12 +582,19 @@ Replacing the token with a classic PAT and re-running setup creates the board.
    limit, dependencies are respected, and a restart does not assign a task twice.
 7. The lead agent moves Copilot drafts to ready for review, starts held workflow runs, and
    requests Copilot review without owner action. A held run never counts as passing.
-8. Copilot findings and failed checks reach Copilot through `@copilot` PR comments. After three
-   remediation cycles, the task is blocked with a visible explanation.
-9. A PR with a clean Copilot review and passing checks for its current head is approved and
-   merged into `main` using the expected head SHA. Unresolved findings, failing or pending
-   checks, or a new commit prevent the merge.
-10. PAT expiration, missing permissions, Copilot quota exhaustion, and network loss preserve
+8. Blocking Copilot findings and failed checks reach Copilot through `@copilot` PR comments.
+   After three remediation cycles, the attempt is blocked and the lead agent receives the full
+   Copilot review history.
+9. A PR with no blocking Copilot findings and passing checks for its current head is approved
+   and merged into `main` using the expected head SHA. Blocking findings, failing or pending
+   checks, or a new commit prevent the merge. Low findings become one follow-up task.
+10. A blocked attempt is retried automatically with a rewritten issue and a fresh Copilot
+    session, up to three attempts. After that, the project shows "Needs attention", and the
+    task can still be retried or supplemented with new tasks through chat once the customer
+    agrees.
+11. After each merge, the lead agent reviews the PR's output and creates follow-up tasks for
+    required work within the approved BRD.
+12. PAT expiration, missing permissions, Copilot quota exhaustion, and network loss preserve
     local data and show actionable errors.
 
 Use automated tests against recorded GitHub responses for repeatability, plus an opt-in live
@@ -571,8 +637,14 @@ Confirmed decisions:
   `main`, with no runnable preview.
 * Merge automatically after approval and passing checks, without per-PR customer confirmation.
 * Use Copilot approvals when present; otherwise the lead agent approves when Copilot's review
-  of the current head leaves no unresolved findings.
+  of the current head leaves no blocking findings.
 * Route Copilot findings to Copilot coding agent through `@copilot` PR comments.
+* Defer Low-severity Copilot findings to an automatic follow-up task instead of blocking the
+  merge.
+* Give each task up to three fresh Copilot attempts with three remediation cycles each. The lead
+  agent rewrites the issue between attempts; retries beyond the limit need the customer's
+  agreement in chat. Blocked tasks are not split into replacement tasks.
+* The lead agent reviews every merged PR and creates required follow-up tasks.
 * The lead agent moves Copilot drafts to ready for review and starts held CI runs by re-running
   them, because GitHub's approval endpoint does not cover Copilot PR runs.
 * Run multiple tasks per project in parallel.
@@ -581,7 +653,7 @@ Confirmed decisions:
 Proposed defaults:
 
 * Python with FastAPI, React with TypeScript, server-sent events, SQLite, and Markdown
-* Up to three parallel tasks per project and three remediation cycles per task
+* Up to three parallel tasks per project
 * Poll GitHub every 60 seconds while the application runs
 * A `main` ruleset that requires pull requests and status checks, without required approvals,
   where the account's plan supports rulesets for the repository

@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from .agent import LeadAgent
 from .bus import EventBus
 from .config import Settings
-from .orchestrator import Orchestrator
+from .orchestrator import MAX_ATTEMPTS, Orchestrator
 from .store import DocumentPathError, Store
 
 REPO_URL = re.compile(r"^https://github\.com/([A-Za-z0-9-]+)/([A-Za-z0-9._-]+?)(?:\.git)?/?$")
@@ -76,7 +76,7 @@ def create_app(settings: Settings, store: Store, bus: EventBus, orch: Orchestrat
             counts[t["state"]] = counts.get(t["state"], 0) + 1
         return {**p, "pat_configured": store.get_pat(p["id"]) is not None,
                 "repo_url": f"https://github.com/{p['repo_owner']}/{p['repo_name']}",
-                "task_counts": counts,
+                "task_counts": counts, "max_attempts": MAX_ATTEMPTS,
                 "needs_attention": p["setup_status"] == "blocked" or counts.get("blocked", 0) > 0}
 
     @app.get("/api/health")
@@ -130,8 +130,17 @@ def create_app(settings: Settings, store: Store, bus: EventBus, orch: Orchestrat
     @app.post("/api/projects/{pid}/setup")
     async def run_setup(pid: str) -> dict:
         project_or_404(pid)
-        p = await asyncio.to_thread(orch.run_setup, pid)
+        try:
+            p = await asyncio.to_thread(orch.run_setup, pid)
+        except ValueError as e:
+            raise HTTPException(404, str(e)) from e
         return public(p)
+
+    @app.delete("/api/projects/{pid}", status_code=204)
+    async def delete_project(pid: str) -> None:
+        project_or_404(pid)
+        # Runs off the event loop because it may wait for an in-flight orchestrator tick to finish.
+        await asyncio.to_thread(orch.delete_project, pid)
 
     @app.post("/api/projects/{pid}/refresh")
     def refresh(pid: str) -> dict:

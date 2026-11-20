@@ -30,6 +30,7 @@ def build():
     orch = Orchestrator(store, bus, settings.poll_seconds)
     agent = LeadAgent(settings, store, orch, bus)
     orch._foundry_check = agent.check_connection
+    orch.on_event = agent.chat_async
     return settings, store, bus, orch, agent
 
 
