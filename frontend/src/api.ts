@@ -7,6 +7,9 @@ export type Task = {
   issue_number: number | null;
   pr_number: number | null;
   remediation_count: number;
+  attempt: number;
+  abandoned_prs: number[];
+  deferred_findings: string[];
   depends_on: string[];
   detail: string | null;
   blocked_reason: string | null;
@@ -31,12 +34,13 @@ export type Project = {
   last_sync_at: string | null;
   pat_configured: boolean;
   task_counts: Record<string, number>;
+  max_attempts: number;
   needs_attention: boolean;
   created_at: string;
 };
 
 export type ProjectDetail = Project & { tasks: Task[]; events: ActivityEvent[]; documents: string[] };
-export type Message = { id: number; role: "user" | "assistant"; content: string; created_at: string };
+export type Message = { id: number; role: "user" | "assistant" | "event"; content: string; created_at: string };
 export type Health = { foundry: { ok: boolean; detail: string }; data_dir: string };
 
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {

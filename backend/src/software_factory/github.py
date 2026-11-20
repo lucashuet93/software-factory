@@ -245,6 +245,13 @@ class GitHub:
     def issue_assigned_to_copilot(self, issue: dict) -> bool:
         return any(is_copilot_author(a.get("login")) for a in issue.get("assignees") or [])
 
+    def unassign_copilot(self, number: int) -> None:
+        """Remove Copilot so the next assignment starts a fresh coding session."""
+        self.rest("DELETE", f"/repos/{self.slug}/issues/{number}/assignees",
+                  json={"assignees": [COPILOT_ASSIGNEE, "Copilot"]})
+        if self.issue_assigned_to_copilot(self.get_issue(number)):
+            raise GitHubError(422, f"Copilot is still assigned to issue #{number} after unassigning")
+
     def linked_pull_requests(self, issue_number: int) -> list[dict]:
         """PRs that reference the issue, newest first."""
         q = """query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){ issue(number:$n){
@@ -269,6 +276,14 @@ class GitHub:
     # ---------- pull requests ----------
     def get_pr(self, number: int) -> dict:
         return self.rest("GET", f"/repos/{self.slug}/pulls/{number}")
+
+    def close_pr(self, number: int, comment: str) -> None:
+        self.comment(number, comment)
+        self.rest("PATCH", f"/repos/{self.slug}/pulls/{number}", json={"state": "closed"})
+
+    def pr_files(self, number: int, limit: int = 100) -> list[str]:
+        files = self.rest("GET", f"/repos/{self.slug}/pulls/{number}/files", params={"per_page": limit}) or []
+        return [f["filename"] for f in files]
 
     def mark_ready(self, pr_node_id: str) -> None:
         q = """mutation($id:ID!){ markPullRequestReadyForReview(input:{pullRequestId:$id}){ pullRequest{ isDraft } } }"""

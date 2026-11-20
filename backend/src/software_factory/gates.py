@@ -13,6 +13,7 @@ class Decision:
     reason: str = ""
     findings: list[str] = field(default_factory=list)
     approval_path: str = ""  # copilot | lead_agent
+    deferred: list[str] = field(default_factory=list)  # Low findings left for a follow-up task
 
 
 def latest_review_for_head(reviews: list[dict], head_sha: str) -> dict | None:
@@ -23,6 +24,16 @@ def latest_review_for_head(reviews: list[dict], head_sha: str) -> dict | None:
     return done[-1] if done else None
 
 
+def severity(c: dict) -> str:
+    """Copilot's severity for a review comment: high, medium, low, or unknown."""
+    return (c.get("copilot_code_review_severity") or "unknown").lower()
+
+
+def is_deferrable(c: dict) -> bool:
+    # Only comments Copilot explicitly rated Low are deferred; unknown severity is treated as blocking.
+    return severity(c) == "low"
+
+
 def format_finding(c: dict) -> str:
     where = c.get("path") or "general"
     line = c.get("line") or c.get("original_line")
@@ -30,7 +41,7 @@ def format_finding(c: dict) -> str:
     body = " ".join((c.get("body") or "").split())
     if len(body) > 600:
         body = body[:600] + "..."
-    return f"`{loc}`: {body}"
+    return f"[{severity(c)}] `{loc}`: {body}"
 
 
 def evaluate(pr: dict, review: dict | None, review_comments: list[dict], checks: CheckSummary,
@@ -48,7 +59,8 @@ def evaluate(pr: dict, review: dict | None, review_comments: list[dict], checks:
     if checks.pending:
         return Decision("wait", "Waiting for checks: " + ", ".join(checks.pending))
 
-    findings = [format_finding(c) for c in review_comments]
+    findings = [format_finding(c) for c in review_comments if not is_deferrable(c)]
+    deferred = [format_finding(c) for c in review_comments if is_deferrable(c)]
     if review.get("state") == "CHANGES_REQUESTED" and not findings:
         findings.append(" ".join((review.get("body") or "Copilot requested changes.").split()))
     findings += [f"Failed check: {f}" for f in checks.failed]
@@ -58,8 +70,9 @@ def evaluate(pr: dict, review: dict | None, review_comments: list[dict], checks:
 
     if findings:
         if remediation_count >= MAX_REMEDIATION_CYCLES:
-            return Decision("block", f"Remediation limit of {MAX_REMEDIATION_CYCLES} cycles reached", findings)
-        return Decision("remediate", "Copilot review or checks reported issues", findings)
+            return Decision("block", f"Remediation limit of {MAX_REMEDIATION_CYCLES} cycles reached", findings,
+                            deferred=deferred)
+        return Decision("remediate", "Copilot review or checks reported issues", findings, deferred=deferred)
 
     if checks.total == 0 and not no_checks_ok:
         return Decision("wait", "Waiting for checks to start")
@@ -71,4 +84,5 @@ def evaluate(pr: dict, review: dict | None, review_comments: list[dict], checks:
         return Decision("wait", f"PR is not mergeable yet ({pr.get('mergeable_state')})")
 
     path = "copilot" if review.get("state") == "APPROVED" else "lead_agent"
-    return Decision("merge", "Copilot review of the current head found no issues", approval_path=path)
+    reason = "Copilot review of the current head found no blocking issues"
+    return Decision("merge", reason, approval_path=path, deferred=deferred)

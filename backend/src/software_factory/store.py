@@ -72,6 +72,19 @@ CREATE TABLE IF NOT EXISTS events (
 
 TASK_STATES = ("todo", "dispatched", "reviewing", "remediating", "merged", "blocked")
 ACTIVE_STATES = ("dispatched", "reviewing", "remediating")
+MESSAGE_ROLES = ("user", "assistant", "event")  # "event" = delivery notice from Software Factory, not the customer
+
+# Task columns added after the first release; applied to new and existing databases alike.
+_TASK_COLUMNS = (
+    ("attempt", "INTEGER NOT NULL DEFAULT 1"),
+    ("abandoned_prs", "TEXT NOT NULL DEFAULT '[]'"),
+    ("attempt_notes", "TEXT NOT NULL DEFAULT '[]'"),
+    ("deferred_findings", "TEXT NOT NULL DEFAULT '[]'"),
+    ("attempt_report", "TEXT"),
+    ("remediation_started_at", "TEXT"),
+    ("follow_up_of", "TEXT"),  # key of the task whose deferred Low findings this task addresses
+)
+_JSON_TASK_FIELDS = ("requirement_ids", "depends_on", "abandoned_prs", "attempt_notes", "deferred_findings")
 
 _DOC_NAME = re.compile(r"^(BRD\.md|memory\.md|documents/[A-Za-z0-9][A-Za-z0-9 _.-]{0,80}\.md)$")
 
@@ -95,6 +108,10 @@ class Store:
         self._db = sqlite3.connect(home / "factory.db", check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._db.executescript(SCHEMA)
+        existing = {r["name"] for r in self._db.execute("PRAGMA table_info(tasks)")}
+        for name, ddl in _TASK_COLUMNS:
+            if name not in existing:
+                self._db.execute(f"ALTER TABLE tasks ADD COLUMN {name} {ddl}")
         self._db.commit()
 
     # ---------- generic helpers ----------
@@ -233,6 +250,8 @@ class Store:
     # Background threads (agent turns, the orchestrator) may finish after a project is deleted, so inserts for a
     # missing project are skipped rather than leaving orphaned rows.
     def add_message(self, pid: str, role: str, content: str) -> dict | None:
+        if role not in MESSAGE_ROLES:
+            raise ValueError(f"Unknown message role {role}")
         with self._lock:
             if not self.project_exists(pid):
                 return None
@@ -253,8 +272,8 @@ class Store:
     # ---------- tasks ----------
     def _task(self, row: dict | None) -> dict | None:
         if row:
-            row["requirement_ids"] = json.loads(row["requirement_ids"])
-            row["depends_on"] = json.loads(row["depends_on"])
+            for k in _JSON_TASK_FIELDS:
+                row[k] = json.loads(row[k])
         return row
 
     def next_task_key(self, pid: str) -> str:
@@ -281,7 +300,7 @@ class Store:
         return [self._task(r) for r in self._all("SELECT * FROM tasks WHERE project_id = ? ORDER BY id", (pid,))]
 
     def update_task(self, pid: str, key: str, **fields: Any) -> dict:
-        for k in ("requirement_ids", "depends_on"):
+        for k in _JSON_TASK_FIELDS:
             if k in fields and not isinstance(fields[k], str):
                 fields[k] = json.dumps(fields[k])
         fields["updated_at"] = now()

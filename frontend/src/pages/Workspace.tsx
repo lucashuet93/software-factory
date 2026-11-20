@@ -70,6 +70,7 @@ export default function Workspace({ id }: { id: string }) {
           <a href={`#/p/${id}/settings`}>Open settings</a> to run the connection checklist.
         </div>
       )}
+      <BlockedBanner project={project} />
       <nav className="tabs">
         {TABS.map((t) => (
           <a key={t} href={`#/p/${id}/${t}`} className={tab === t ? "active" : ""}>{TAB_LABEL[t]}</a>
@@ -80,6 +81,48 @@ export default function Workspace({ id }: { id: string }) {
       {tab === "backlog" && <Backlog project={project} />}
       {tab === "settings" && <Settings project={project} onChange={loadProject} />}
     </section>
+  );
+}
+
+function BlockedBanner({ project }: { project: ProjectDetail }) {
+  const blocked = project.tasks.filter((t) => t.state === "blocked");
+  if (blocked.length === 0) return null;
+  const needsYou = blocked.filter((t) => t.attempt >= project.max_attempts);
+  const reworking = blocked.filter((t) => t.attempt < project.max_attempts);
+  return (
+    <div className={`banner ${needsYou.length ? "blocked" : "warn"}`}>
+      {needsYou.length > 0 && (
+        <div>
+          <strong>Needs your input:</strong> {needsYou.map((t) => `${t.key} ${t.title}`).join(", ")} used all{" "}
+          {project.max_attempts} Copilot attempts. <a href={`#/p/${project.id}/chat`}>Chat with the lead engineer</a>{" "}
+          to agree on a rewrite or new tasks.
+        </div>
+      )}
+      {reworking.length > 0 && (
+        <div>
+          <strong>Being reworked:</strong> {reworking.map((t) => `${t.key} (attempt ${t.attempt} of ${project.max_attempts})`).join(", ")}{" "}
+          failed review. The lead engineer is rewriting the brief for a fresh attempt.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EventNote({ content }: { content: string }) {
+  const [open, setOpen] = useState(false);
+  const [summary, ...rest] = content.split("\n");
+  const details = rest.join("\n").trim();
+  return (
+    <div className="msg event">
+      <div className="who">Software Factory</div>
+      <Markdown text={summary} />
+      {details && (
+        <>
+          <button className="link small" onClick={() => setOpen(!open)}>{open ? "Hide details" : "Show details"}</button>
+          {open && <Markdown text={details} />}
+        </>
+      )}
+    </div>
   );
 }
 
@@ -110,7 +153,7 @@ function Chat({ id, messages, thinking, onSent }: { id: string; messages: Messag
         {messages.length === 0 && (
           <p className="muted">Start by asking the lead engineer to review your BRD and propose a plan.</p>
         )}
-        {messages.map((m) => (
+        {messages.map((m) => m.role === "event" ? <EventNote key={m.id} content={m.content} /> : (
           <div key={m.id} className={`msg ${m.role}`}>
             <div className="who">{m.role === "user" ? "You" : "Lead engineer"}</div>
             <Markdown text={m.content} />
@@ -189,10 +232,16 @@ function Backlog({ project }: { project: ProjectDetail }) {
                   <td><strong>{t.key}</strong> {t.title}
                     {t.depends_on.length > 0 && <div className="muted small">after {t.depends_on.join(", ")}</div>}</td>
                   <td><span className={`pill state-${t.state}`}>{STATE_LABEL[t.state]}</span>
+                    {(t.attempt > 1 || t.state === "blocked") && (
+                      <div className="muted small">attempt {t.attempt} of {project.max_attempts}</div>)}
                     {t.remediation_count > 0 && <div className="muted small">{t.remediation_count} fix cycle(s)</div>}</td>
                   <td className="nowrap">
                     {t.issue_number && <a href={`${repo}/issues/${t.issue_number}`} target="_blank" rel="noreferrer">#{t.issue_number}</a>}
                     {t.pr_number && <> · <a href={`${repo}/pull/${t.pr_number}`} target="_blank" rel="noreferrer">PR #{t.pr_number}</a></>}
+                    {t.abandoned_prs.length > 0 && (
+                      <div className="muted small">abandoned {t.abandoned_prs.map((n, i) => (
+                        <span key={n}>{i > 0 && ", "}<a href={`${repo}/pull/${n}`} target="_blank" rel="noreferrer">#{n}</a></span>
+                      ))}</div>)}
                   </td>
                   <td className="small">{t.state === "blocked" ? t.blocked_reason : t.detail}</td>
                 </tr>

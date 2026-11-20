@@ -71,6 +71,8 @@ textarea { resize: vertical; }
 .msg.user { align-self: flex-end; background: #ddf4ff; border-color: #b6e3ff; }
 .msg .who { font-size: 0.75rem; color: var(--muted); margin-bottom: 0.2rem; }
 .msg.thinking { color: var(--muted); font-style: italic; }
+.msg.event { align-self: center; max-width: 90%; background: #f6f8fa; border-style: dashed; font-size: 0.88rem; }
+.msg.event button.link { font-size: 0.8rem; }
 .composer { display: flex; gap: 0.6rem; padding-top: 0.6rem; }
 .composer textarea { flex: 1; }
 .markdown > :first-child { margin-top: 0; }
