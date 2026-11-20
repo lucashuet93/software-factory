@@ -29,7 +29,7 @@ export default function App() {
   const projectMatch = route.match(/^#\/p\/([a-z0-9]+)/);
   let page;
   if (route.startsWith("#/new")) page = <NewProject />;
-  else if (projectMatch) page = <Workspace id={projectMatch[1]} />;
+  else if (projectMatch) page = <Workspace key={projectMatch[1]} id={projectMatch[1]} />;
   else page = <ProjectList />;
 
   return (

@@ -36,12 +36,23 @@ export type Project = {
   task_counts: Record<string, number>;
   max_attempts: number;
   needs_attention: boolean;
+  call_active: boolean;
   created_at: string;
 };
 
 export type ProjectDetail = Project & { tasks: Task[]; events: ActivityEvent[]; documents: string[] };
-export type Message = { id: number; role: "user" | "assistant" | "event"; content: string; created_at: string };
-export type Health = { foundry: { ok: boolean; detail: string }; data_dir: string };
+export type Message = {
+  id: number;
+  role: "user" | "assistant" | "event";
+  channel: "chat" | "call";
+  content: string;
+  created_at: string;
+};
+export type Health = {
+  foundry: { ok: boolean; detail: string };
+  voice: { ok: boolean; detail: string };
+  data_dir: string;
+};
 
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {

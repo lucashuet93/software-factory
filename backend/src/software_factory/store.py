@@ -73,8 +73,12 @@ CREATE TABLE IF NOT EXISTS events (
 TASK_STATES = ("todo", "dispatched", "reviewing", "remediating", "merged", "blocked")
 ACTIVE_STATES = ("dispatched", "reviewing", "remediating")
 MESSAGE_ROLES = ("user", "assistant", "event")  # "event" = delivery notice from Software Factory, not the customer
+MESSAGE_CHANNELS = ("chat", "call")  # "call" = transcribed from a video call with the lead engineer
 
-# Task columns added after the first release; applied to new and existing databases alike.
+# Columns added after the first release; applied to new and existing databases alike.
+_MESSAGE_COLUMNS = (
+    ("channel", "TEXT NOT NULL DEFAULT 'chat'"),
+)
 _TASK_COLUMNS = (
     ("attempt", "INTEGER NOT NULL DEFAULT 1"),
     ("abandoned_prs", "TEXT NOT NULL DEFAULT '[]'"),
@@ -108,10 +112,11 @@ class Store:
         self._db = sqlite3.connect(home / "factory.db", check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._db.executescript(SCHEMA)
-        existing = {r["name"] for r in self._db.execute("PRAGMA table_info(tasks)")}
-        for name, ddl in _TASK_COLUMNS:
-            if name not in existing:
-                self._db.execute(f"ALTER TABLE tasks ADD COLUMN {name} {ddl}")
+        for table, columns in (("tasks", _TASK_COLUMNS), ("messages", _MESSAGE_COLUMNS)):
+            existing = {r["name"] for r in self._db.execute(f"PRAGMA table_info({table})")}
+            for name, ddl in columns:
+                if name not in existing:
+                    self._db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
         self._db.commit()
 
     # ---------- generic helpers ----------
@@ -249,15 +254,17 @@ class Store:
     # ---------- messages ----------
     # Background threads (agent turns, the orchestrator) may finish after a project is deleted, so inserts for a
     # missing project are skipped rather than leaving orphaned rows.
-    def add_message(self, pid: str, role: str, content: str) -> dict | None:
+    def add_message(self, pid: str, role: str, content: str, channel: str = "chat") -> dict | None:
         if role not in MESSAGE_ROLES:
             raise ValueError(f"Unknown message role {role}")
+        if channel not in MESSAGE_CHANNELS:
+            raise ValueError(f"Unknown message channel {channel}")
         with self._lock:
             if not self.project_exists(pid):
                 return None
             cur = self._exec(
-                "INSERT INTO messages (project_id, role, content, created_at) VALUES (?, ?, ?, ?)",
-                (pid, role, content, now()),
+                "INSERT INTO messages (project_id, role, content, created_at, channel) VALUES (?, ?, ?, ?, ?)",
+                (pid, role, content, now(), channel),
             )
             return self._one("SELECT * FROM messages WHERE id = ?", (cur.lastrowid,))
 

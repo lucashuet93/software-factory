@@ -132,14 +132,14 @@ def pending_messages(messages: list[dict], seen_id: int | None = None) -> list[d
     """Messages the agent has not responded to yet.
 
     seen_id is the newest message the previous turn read. Without it (for example after a restart), everything after
-    the last assistant reply counts as pending.
+    the last assistant reply counts as pending. Video-call transcripts are never pending: the call already answered them.
     """
     if seen_id is not None:
-        return [m for m in messages if m["id"] > seen_id and m["role"] != "assistant"]
+        return [m for m in messages if m["id"] > seen_id and m["role"] != "assistant" and m.get("channel") != "call"]
     for i in range(len(messages) - 1, -1, -1):
         if messages[i]["role"] == "assistant":
-            return messages[i + 1:]
-    return messages
+            return [m for m in messages[i + 1:] if m.get("channel") != "call"]
+    return [m for m in messages if m.get("channel") != "call"]
 
 
 def is_customer_turn(messages: list[dict], seen_id: int | None = None) -> bool:
@@ -158,7 +158,8 @@ def history_items(messages: list[dict], seen_id: int | None = None) -> list[dict
                 text = text[:OLD_EVENT_LIMIT] + "\n...(older event trimmed; use get_task_details for full history)"
             items.append({"role": "user", "content": f"{EVENT_PREFIX}\n{text}"})
         elif m["role"] in ("user", "assistant"):
-            items.append({"role": m["role"], "content": m["content"]})
+            text = f"(said on a video call) {m['content']}" if m.get("channel") == "call" else m["content"]
+            items.append({"role": m["role"], "content": text})
     return items
 
 
@@ -218,6 +219,11 @@ class LeadAgent:
             return self._agent_ref
 
     # ---------- chat ----------
+    def mark_seen(self, pid: str, msg_id: int) -> None:
+        """Record that messages up to msg_id were handled elsewhere (a video call), so chat turns don't answer them."""
+        with self._pending_lock:
+            self._seen[pid] = msg_id
+
     def chat_async(self, pid: str) -> None:
         """Schedule a turn. Requests that arrive while one is queued share it, so a burst of events gets one reply."""
         with self._pending_lock:
