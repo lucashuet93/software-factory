@@ -27,6 +27,15 @@ def test_allowed_documents_round_trip(store, project):
     assert store.read_document(project["id"], "documents/architecture.md") == "# Arch"
 
 
+def test_crlf_documents_keep_single_line_breaks_across_saves(store, project):
+    table = "| ID | Requirement |\r\n|---|---|\r\n| FR-001 | Hello |\r\n"
+    store.write_document(project["id"], "BRD.md", table)
+    store.write_document(project["id"], "BRD.md", store.read_document(project["id"], "BRD.md"))
+    assert store.read_document(project["id"], "BRD.md") == "| ID | Requirement |\n|---|---|\n| FR-001 | Hello |\n"
+    created = store.create_project("crlf", "", "me", "repo", "a\r\nb")
+    assert store.read_document(created["id"], "BRD.md") == "a\nb"
+
+
 class FakeGitHub:
     def __init__(self, assigned=False, linked=()):
         self.assigned = assigned
