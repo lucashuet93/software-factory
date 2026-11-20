@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type Message, type ProjectDetail, type Task } from "../api";
+import { api, type Health, type Message, type ProjectDetail, type Task } from "../api";
 import Markdown from "../Markdown";
-import { Gear } from "../Icons";
+import { Camera, Gear } from "../Icons";
+import { CallAudio, CallStage, useCall, type Call } from "./Call";
 import { deliveryLabel } from "./ProjectList";
 
 const TABS = ["chat", "brd", "backlog", "settings"] as const;
@@ -20,9 +21,15 @@ export default function Workspace({ id }: { id: string }) {
   const [docVersion, setDocVersion] = useState(0);
   const [tab, setTab] = useState<Tab>(currentTab());
   const [error, setError] = useState("");
+  const [voice, setVoice] = useState<Health["voice"] | null>(null);
+  const call = useCall(id);
 
   const loadProject = useCallback(() => api.project(id).then(setProject).catch((e) => setError(e.message)), [id]);
   const loadMessages = useCallback(() => api.messages(id).then(setMessages), [id]);
+
+  useEffect(() => {
+    api.health().then((h) => setVoice(h.voice)).catch(() => setVoice({ ok: false, detail: "Server unreachable" }));
+  }, []);
 
   useEffect(() => {
     const onHash = () => setTab(currentTab());
@@ -62,6 +69,9 @@ export default function Workspace({ id }: { id: string }) {
         </div>
         <div className="stack-right">
           <span className="pill">{deliveryLabel(project)}</span>
+          {call.active && tab !== "chat" && (
+            <a className="pill on-call" href={`#/p/${id}/chat`}><span className="lamp" /> On a call · return</a>
+          )}
           <span className="muted small">
             {project.last_sync_at ? `Last GitHub sync ${new Date(project.last_sync_at).toLocaleTimeString()}` : "Not synced yet"}
           </span>
@@ -79,10 +89,14 @@ export default function Workspace({ id }: { id: string }) {
           <a key={t} href={`#/p/${id}/${t}`} className={tab === t ? "active" : ""}>{TAB_LABEL[t]}</a>
         ))}
       </nav>
-      {tab === "chat" && <Chat id={id} messages={messages} thinking={thinking} onSent={loadMessages} />}
+      {tab === "chat" && (
+        <Chat id={id} project={project} messages={messages} thinking={thinking} onSent={loadMessages}
+          call={call} voice={voice} />
+      )}
       {tab === "brd" && <Brd id={id} version={docVersion} />}
       {tab === "backlog" && <Backlog project={project} />}
       {tab === "settings" && <Settings project={project} onChange={loadProject} />}
+      <CallAudio stream={call.audio} />
     </section>
   );
 }
@@ -129,7 +143,17 @@ function EventNote({ content }: { content: string }) {
   );
 }
 
-function Chat({ id, messages, thinking, onSent }: { id: string; messages: Message[]; thinking: boolean; onSent: () => void }) {
+type ChatProps = {
+  id: string;
+  project: ProjectDetail;
+  messages: Message[];
+  thinking: boolean;
+  onSent: () => void;
+  call: Call;
+  voice: Health["voice"] | null;
+};
+
+function Chat({ id, project, messages, thinking, onSent, call, voice }: ChatProps) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
@@ -140,10 +164,16 @@ function Chat({ id, messages, thinking, onSent }: { id: string; messages: Messag
   }, [messages, thinking]);
 
   async function send() {
-    if (!text.trim()) return;
+    const content = text.trim();
+    if (!content) return;
+    if (call.active) {
+      call.sendText(content);
+      setText("");
+      return;
+    }
     setBusy(true);
     try {
-      await api.sendMessage(id, text.trim());
+      await api.sendMessage(id, content);
       setText("");
       onSent();
     } finally {
@@ -151,25 +181,47 @@ function Chat({ id, messages, thinking, onSent }: { id: string; messages: Messag
     }
   }
 
+  const callBlocked = !voice ? "Checking whether video calls are available..."
+    : !voice.ok ? `Video calls are unavailable. ${voice.detail}`
+      : project.call_active && !call.active ? "A call with this project is already open in another tab." : "";
+  const lastCall = call.error || (call.endReason && call.endReason !== "Call ended" ? `Call ended: ${call.endReason}` : "");
+
   return (
-    <div className="chat panel">
-      <div className="messages" ref={listRef}>
-        {messages.length === 0 && (
-          <div className="empty">
-            <Gear size={48} teeth={10} />
-            <p>Start by asking the lead engineer to review your BRD and propose a plan.</p>
-          </div>
+    <div className={`chat panel ${call.active ? "in-call" : ""}`}>
+      <div className="chat-bar">
+        <span className="chat-title"><Gear size={14} /> Lead engineer</span>
+        {!call.active && lastCall && <span className={`small ${call.error ? "error-text" : "muted"}`}>{lastCall}</span>}
+        {!call.active && (
+          <button className="call-btn" onClick={call.start} disabled={Boolean(callBlocked)}
+            title={callBlocked || "Start a video call with the lead engineer"}>
+            <Camera /> Video call
+          </button>
         )}
-        {messages.map((m) => m.role === "event" ? <EventNote key={m.id} content={m.content} /> : (
-          <div key={m.id} className={`msg ${m.role}`}>
-            <div className="who">{m.role === "user" ? "You" : <><Gear size={12} /> Lead engineer</>}</div>
-            <Markdown text={m.content} />
-          </div>
-        ))}
-        {thinking && <div className="msg assistant thinking"><Gear size={18} spin /> Lead engineer is working...</div>}
+      </div>
+      <div className="chat-body">
+        {call.active && <CallStage call={call} />}
+        <div className="messages" ref={listRef}>
+          {messages.length === 0 && (
+            <div className="empty">
+              <Gear size={48} teeth={10} />
+              <p>Start by asking the lead engineer to review your BRD and propose a plan, or start a video call.</p>
+            </div>
+          )}
+          {messages.map((m) => m.role === "event" ? <EventNote key={m.id} content={m.content} /> : (
+            <div key={m.id} className={`msg ${m.role} ${m.channel === "call" ? "via-call" : ""}`}>
+              <div className="who">
+                {m.role === "user" ? "You" : <><Gear size={12} /> Lead engineer</>}
+                {m.channel === "call" && <span className="call-tag"><Camera size={12} /> on call</span>}
+              </div>
+              <Markdown text={m.content} />
+            </div>
+          ))}
+          {thinking && <div className="msg assistant thinking"><Gear size={18} spin /> Lead engineer is working...</div>}
+        </div>
       </div>
       <div className="composer">
-        <textarea rows={3} value={text} placeholder="Message the lead engineer"
+        <textarea rows={call.active ? 2 : 3} value={text}
+          placeholder={call.active ? "Speak, or type a line to the lead engineer on the call" : "Message the lead engineer"}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} />
         <button className="primary" onClick={send} disabled={busy || !text.trim()}>Send</button>

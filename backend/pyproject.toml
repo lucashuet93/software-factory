@@ -13,6 +13,7 @@ dependencies = [
     "azure-identity>=1.23",
     "azure-ai-projects>=2.0",
     "python-dotenv>=1.0",
+    "websockets>=13",
 ]
 
 [project.optional-dependencies]

@@ -152,6 +152,7 @@ explanation.
 Opening a project exposes:
 
 * Chat with the lead engineer agent, with durable conversation history
+* A video call with the lead engineer, started from chat (section 5.6)
 * The BRD as rendered Markdown with editing
 * A backlog view showing tasks, board status, assigned Copilot work, PR and review state,
   and blockers
@@ -167,6 +168,29 @@ that delivery has started, so it resumes after a restart. Starting delivery auth
 agent to assign tasks, move Copilot drafts to ready for review, request reviews, approve
 PRs, and merge them into `main` without per-PR customer confirmation. Stopping the application
 is the MVP's way to halt new dispatch and merges.
+
+### 5.6 Video call with the lead engineer
+
+A **Video call** button in chat opens a call inside the page. The lead engineer appears as an
+Azure Voice Live standard video avatar, listens through the customer's microphone, and answers
+aloud with live captions. The customer can also type lines into the call. Only the avatar sends
+video; the customer's camera is not used.
+
+* The call runs a Voice Live real-time model, `gpt-realtime` by default, with the lead engineer's
+  instructions, project context (section 6.2), recent chat, and tools. Voice rules are added:
+  short spoken sentences, no Markdown, and a spoken description of each change followed by the
+  customer's explicit confirmation before `create_task`, `update_task`, `retry_task`,
+  `write_document`, or `start_delivery`. During a call this applies to delivery events too.
+* The backend relays microphone audio, typed lines, and the avatar's WebRTC offer and answer
+  between the browser and Voice Live, and runs tool calls with the same validated project-scoped
+  tools as chat. The avatar's video and voice stream from Azure directly to the browser.
+* Each finished utterance is saved to the chat history and marked as from the call. Chat turns
+  do not answer call messages, but later chat turns see them as history.
+* While a call is open, delivery events (sections 7.6 and 7.7) go to the call instead of chat.
+  Events that arrive as the call ends go to chat.
+* One call per project at a time. The call keeps running when the customer switches tabs, and
+  ends after 10 minutes without conversation, after 30 minutes, or when the app stops. The
+  activity log records when each call starts and ends.
 
 ## 6. Requirements and project context
 
@@ -417,6 +441,9 @@ flowchart LR
     GH --> CODER[Copilot coding agent]
     GH --> REVIEW[Copilot code review]
     GH --> CI[GitHub checks and merge rules]
+    API --> VOICE[Azure Voice Live call]
+    VOICE --> TOOLS
+    VOICE -. avatar video over WebRTC .-> UI
 ```
 
 ### 9.2 Proposed stack
@@ -491,6 +518,10 @@ AZURE_TOKEN_CREDENTIALS=dev
 SOFTWARE_FACTORY_AGENT_NAME=software-factory-lead
 SOFTWARE_FACTORY_HOME=
 LOG_LEVEL=INFO
+VOICE_LIVE_ENDPOINT=
+VOICE_LIVE_MODEL=gpt-realtime
+VOICE_LIVE_VOICE=en-US-Ava:DragonHDLatestNeural
+VOICE_LIVE_AVATAR=lisa-casual-sitting
 ```
 
 Software Factory authenticates to Foundry only with Microsoft Entra ID; it does not support
@@ -503,6 +534,13 @@ belongs to several tenants.
 Before starting Software Factory, the owner signs in with `az login --tenant <tenant-id>`.
 The signed-in user needs the **Foundry User** role on the Foundry project or resource, and
 assigning that role requires Owner or User Access Administrator at that scope.
+
+Video calls connect to Voice Live at `wss://<resource>/voice-live/realtime` on the Foundry
+resource behind `AZURE_AI_PROJECT_ENDPOINT`, or on the resource in `VOICE_LIVE_ENDPOINT`, with
+the same Entra credential. That resource must be in a region that supports avatars, and the
+signed-in user needs the **Foundry User** role on the resource itself, not only on the project. `VOICE_LIVE_AVATAR` names
+a standard video avatar as `<character>-<style>`. Voice Live hosts its real-time models as a
+managed service, so calls need no model deployment beyond the lead engineer's chat model.
 
 At startup, the service requests a token and calls the project endpoint. The UI shows Foundry
 connection status with specific guidance: sign in again when no credential is available or a
@@ -648,6 +686,8 @@ Confirmed decisions:
 * The lead agent moves Copilot drafts to ready for review and starts held CI runs by re-running
   them, because GitHub's approval endpoint does not cover Copilot PR runs.
 * Run multiple tasks per project in parallel.
+* Offer in-page video calls with the lead engineer through Azure Voice Live with a standard
+  avatar and the `gpt-realtime` model. Changes made on a call need spoken confirmation.
 * Support Windows only.
 
 Proposed defaults:

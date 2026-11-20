@@ -5,7 +5,7 @@ from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -15,6 +15,7 @@ from .bus import EventBus
 from .config import Settings
 from .orchestrator import MAX_ATTEMPTS, Orchestrator
 from .store import DocumentPathError, Store
+from .voice import CallManager
 
 REPO_URL = re.compile(r"^https://github\.com/([A-Za-z0-9-]+)/([A-Za-z0-9._-]+?)(?:\.git)?/?$")
 FRONTEND_DIST = Path(__file__).resolve().parents[3] / "frontend" / "dist"
@@ -46,8 +47,10 @@ class DocumentIn(BaseModel):
 
 
 def create_app(settings: Settings, store: Store, bus: EventBus, orch: Orchestrator, agent: LeadAgent,
-               start_worker: bool = True, is_shutting_down: Callable[[], bool] = lambda: False) -> FastAPI:
+               start_worker: bool = True, is_shutting_down: Callable[[], bool] = lambda: False,
+               calls: CallManager | None = None) -> FastAPI:
     foundry_status: dict = {"ok": False, "detail": "Not checked yet"}
+    calls = calls or CallManager(settings, store, bus, agent)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -76,12 +79,12 @@ def create_app(settings: Settings, store: Store, bus: EventBus, orch: Orchestrat
             counts[t["state"]] = counts.get(t["state"], 0) + 1
         return {**p, "pat_configured": store.get_pat(p["id"]) is not None,
                 "repo_url": f"https://github.com/{p['repo_owner']}/{p['repo_name']}",
-                "task_counts": counts, "max_attempts": MAX_ATTEMPTS,
+                "task_counts": counts, "max_attempts": MAX_ATTEMPTS, "call_active": calls.is_active(p["id"]),
                 "needs_attention": p["setup_status"] == "blocked" or counts.get("blocked", 0) > 0}
 
     @app.get("/api/health")
     def health() -> dict:
-        return {"foundry": foundry_status, "data_dir": str(settings.home)}
+        return {"foundry": foundry_status, "voice": calls.status(), "data_dir": str(settings.home)}
 
     @app.post("/api/health/foundry")
     def recheck_foundry() -> dict:
@@ -160,6 +163,10 @@ def create_app(settings: Settings, store: Store, bus: EventBus, orch: Orchestrat
         bus.publish(pid, {"type": "message"})
         agent.chat_async(pid)
         return msg
+
+    @app.websocket("/api/projects/{pid}/call")
+    async def call(pid: str, websocket: WebSocket) -> None:
+        await calls.handle(pid, websocket, is_shutting_down)
 
     @app.get("/api/projects/{pid}/documents/{name:path}")
     def read_document(pid: str, name: str) -> dict:

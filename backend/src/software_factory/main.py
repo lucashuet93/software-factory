@@ -11,6 +11,7 @@ from .bus import EventBus
 from .config import load_settings
 from .orchestrator import Orchestrator
 from .store import Store
+from .voice import CallManager
 
 
 class RedactingFilter(logging.Filter):
@@ -29,13 +30,15 @@ def build():
     bus = EventBus()
     orch = Orchestrator(store, bus, settings.poll_seconds)
     agent = LeadAgent(settings, store, orch, bus)
+    calls = CallManager(settings, store, bus, agent)
     orch._foundry_check = agent.check_connection
-    orch.on_event = agent.chat_async
-    return settings, store, bus, orch, agent
+    # Delivery events wake the lead engineer: on the live video call if one is open, otherwise in chat.
+    orch.on_event = calls.route_event
+    return settings, store, bus, orch, agent, calls
 
 
 def main() -> None:
-    settings, store, bus, orch, agent = build()
+    settings, store, bus, orch, agent, calls = build()
     handler = logging.FileHandler(settings.home / "logs" / "software-factory.log", encoding="utf-8")
     console = logging.StreamHandler()
     for h in (handler, console):
@@ -49,7 +52,7 @@ def main() -> None:
     print(f"Software Factory running at {url} (data: {settings.home}). Press Ctrl+C to stop.")
     server: uvicorn.Server | None = None
     app = create_app(settings, store, bus, orch, agent,
-                     is_shutting_down=lambda: bool(server and server.should_exit))
+                     is_shutting_down=lambda: bool(server and server.should_exit), calls=calls)
     server = uvicorn.Server(uvicorn.Config(app, host=settings.host, port=settings.port, log_level="warning",
                                            timeout_graceful_shutdown=3))
     threading.Timer(1.5, lambda: webbrowser.open(url)).start()
