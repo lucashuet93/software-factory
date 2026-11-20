@@ -97,6 +97,12 @@ def now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
+def write_markdown(path: Path, content: str) -> None:
+    """Store Markdown with LF line endings. Writing CRLF text in Windows text mode produces CR CR LF, which reads back
+    as an extra blank line after every line and breaks tables."""
+    path.write_text(content.replace("\r\n", "\n").replace("\r", "\n"), encoding="utf-8", newline="\n")
+
+
 class DocumentPathError(ValueError):
     pass
 
@@ -146,8 +152,8 @@ class Store:
         )
         pdir = self.project_dir(pid)
         (pdir / "documents").mkdir(parents=True, exist_ok=True)
-        (pdir / "BRD.md").write_text(brd, encoding="utf-8")
-        (pdir / "memory.md").write_text("# Project memory\n", encoding="utf-8")
+        write_markdown(pdir / "BRD.md", brd)
+        write_markdown(pdir / "memory.md", "# Project memory\n")
         self._write_project_json(pid)
         return self.get_project(pid)
 
@@ -240,7 +246,7 @@ class Store:
         path = self._doc_path(pid, name)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(content, encoding="utf-8")
+        write_markdown(tmp, content)
         tmp.replace(path)
 
     def list_documents(self, pid: str) -> list[str]:
