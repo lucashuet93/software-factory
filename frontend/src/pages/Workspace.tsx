@@ -35,6 +35,10 @@ export default function Workspace({ id }: { id: string }) {
     const es = new EventSource(`/api/projects/${id}/stream`);
     es.onmessage = (e) => {
       const ev = JSON.parse(e.data);
+      if (ev.type === "deleted") {
+        window.location.hash = "#/";
+        return;
+      }
       if (ev.type === "message") loadMessages();
       else if (ev.type === "agent") setThinking(ev.status === "thinking");
       else if (ev.type === "document") setDocVersion((v) => v + 1);
@@ -263,6 +267,53 @@ function Settings({ project, onChange }: { project: ProjectDetail; onChange: () 
         </label>
         {msg && <p className="hint">{msg}</p>}
       </div>
+      <DeleteProject project={project} />
+    </div>
+  );
+}
+
+function DeleteProject({ project }: { project: ProjectDetail }) {
+  const [confirmName, setConfirmName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const active = (project.task_counts.dispatched ?? 0) + (project.task_counts.reviewing ?? 0)
+    + (project.task_counts.remediating ?? 0);
+
+  async function remove() {
+    setBusy(true);
+    setError("");
+    try {
+      await api.deleteProject(project.id);
+      window.location.hash = "#/";
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="panel danger">
+      <h2>Delete project</h2>
+      <p className="small">
+        Permanently deletes this project's local data: chat history, BRD, memory, documents, task tracking, activity,
+        and the stored GitHub token. Nothing on GitHub is deleted. The repository, board, issues, and pull requests
+        stay as they are.
+      </p>
+      {active > 0 && (
+        <p className="small warn-text">
+          {active} task(s) are still in progress. Copilot sessions and CI already running on GitHub will continue,
+          but Software Factory will stop reviewing and merging them.
+        </p>
+      )}
+      <label>Type <code>{project.name}</code> to confirm
+        <div className="row">
+          <input value={confirmName} onChange={(e) => setConfirmName(e.target.value)} autoComplete="off" />
+          <button className="danger" disabled={busy || confirmName !== project.name} onClick={remove}>
+            {busy ? "Deleting..." : "Delete project"}
+          </button>
+        </div>
+      </label>
+      {error && <div className="banner blocked">{error}</div>}
     </div>
   );
 }

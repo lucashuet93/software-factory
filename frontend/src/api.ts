@@ -55,6 +55,7 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
     }
     throw new Error(detail);
   }
+  if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
 
@@ -67,6 +68,7 @@ export const api = {
     request<Project>("POST", "/api/projects", body),
   patchProject: (id: string, body: { parallel_limit?: number; delivery_started?: boolean }) =>
     request<Project>("PATCH", `/api/projects/${id}`, body),
+  deleteProject: (id: string) => request<void>("DELETE", `/api/projects/${id}`),
   updatePat: (id: string, pat: string) => request<{ pat_configured: boolean }>("PUT", `/api/projects/${id}/pat`, { pat }),
   runSetup: (id: string) => request<Project>("POST", `/api/projects/${id}/setup`),
   refresh: (id: string) => request<{ ok: boolean }>("POST", `/api/projects/${id}/refresh`),

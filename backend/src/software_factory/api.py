@@ -130,8 +130,17 @@ def create_app(settings: Settings, store: Store, bus: EventBus, orch: Orchestrat
     @app.post("/api/projects/{pid}/setup")
     async def run_setup(pid: str) -> dict:
         project_or_404(pid)
-        p = await asyncio.to_thread(orch.run_setup, pid)
+        try:
+            p = await asyncio.to_thread(orch.run_setup, pid)
+        except ValueError as e:
+            raise HTTPException(404, str(e)) from e
         return public(p)
+
+    @app.delete("/api/projects/{pid}", status_code=204)
+    async def delete_project(pid: str) -> None:
+        project_or_404(pid)
+        # Runs off the event loop because it may wait for an in-flight orchestrator tick to finish.
+        await asyncio.to_thread(orch.delete_project, pid)
 
     @app.post("/api/projects/{pid}/refresh")
     def refresh(pid: str) -> dict:

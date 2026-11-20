@@ -33,6 +33,9 @@ main { max-width: 1200px; margin: 0 auto; padding: 1.5rem; }
 button, .button { font: inherit; padding: 0.45rem 0.9rem; border-radius: 6px; border: 1px solid var(--border);
   background: #f6f8fa; color: var(--text); cursor: pointer; text-decoration: none; display: inline-block; }
 button.primary, .button.primary { background: #1f883d; border-color: #1f883d; color: white; }
+button.danger { background: #cf222e; border-color: #cf222e; color: white; }
+.panel.danger { border-color: #ff8182; }
+.warn-text { color: var(--warn); }
 button:disabled { opacity: 0.6; cursor: default; }
 button.link { background: none; border: none; color: var(--accent); padding: 0; text-decoration: underline; }
 .pill { font-size: 0.78rem; padding: 0.15rem 0.6rem; border-radius: 999px; background: #eaeef2; color: var(--text);

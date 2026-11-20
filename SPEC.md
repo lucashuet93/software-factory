@@ -152,7 +152,10 @@ Opening a project exposes:
 * The BRD as rendered Markdown with editing
 * A backlog view showing tasks, board status, assigned Copilot work, PR and review state,
   and blockers
-* Settings showing the repository, board link, PAT status, and parallel task limit
+* Settings showing the repository, board link, PAT status, and parallel task limit, plus project
+  deletion. Deleting requires typing the project name, removes only local data (database rows,
+  documents, and the stored PAT), and explains that GitHub resources and running Copilot work
+  remain
 
 ### 5.5 Start delivery
 

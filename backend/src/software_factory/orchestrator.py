@@ -68,10 +68,22 @@ class Orchestrator:
 
     def event(self, pid: str, kind: str, message: str, url: str | None = None) -> None:
         ev = self.store.add_event(pid, kind, message, url)
-        self.bus.publish(pid, {"type": "event", "event": ev})
+        if ev:
+            self.bus.publish(pid, {"type": "event", "event": ev})
 
     def notify(self, pid: str) -> None:
         self.bus.publish(pid, {"type": "project"})
+
+    def delete_project(self, pid: str) -> bool:
+        """Delete local project data. GitHub resources and assigned Copilot work are left untouched."""
+        with self.lock(pid):  # waits for an in-flight tick or setup run on this project
+            deleted = self.store.delete_project(pid)
+        self._locks.pop(pid, None)
+        self._last_error.pop(pid, None)
+        self._notified_stuck = {k for k in self._notified_stuck if k[0] != pid}
+        if deleted:
+            self.bus.publish(pid, {"type": "deleted"})
+        return deleted
 
     def wake(self) -> None:
         self._wake.set()
@@ -128,6 +140,13 @@ class Orchestrator:
 
     # ---------- setup ----------
     def run_setup(self, pid: str) -> dict:
+        # Hold the project lock so a delete cannot interleave with setup's GitHub calls and store writes.
+        with self.lock(pid):
+            if not self.store.project_exists(pid):
+                raise ValueError("Project not found")
+            return self._run_setup(pid)
+
+    def _run_setup(self, pid: str) -> dict:
         project = self.store.get_project(pid)
         checklist: list[dict] = []
 
@@ -289,6 +308,8 @@ class Orchestrator:
     def tick(self, pid: str) -> None:
         with self.lock(pid):
             project = self.store.get_project(pid)
+            if not project:
+                return  # deleted since the loop listed projects
             gh = self.gh(project)
             for task in self.store.list_tasks(pid):
                 if task["state"] in ACTIVE_STATES:

@@ -1,5 +1,6 @@
 import json
 import re
+import shutil
 import sqlite3
 import threading
 import uuid
@@ -156,9 +157,27 @@ class Store:
     def project_dir(self, pid: str) -> Path:
         return self.projects_dir / pid
 
+    def project_exists(self, pid: str) -> bool:
+        return self._one("SELECT 1 AS x FROM projects WHERE id = ?", (pid,)) is not None
+
+    def delete_project(self, pid: str) -> bool:
+        """Remove all local data for a project. Returns False if it did not exist."""
+        with self._lock:
+            if not self.project_exists(pid):
+                return False
+            for table in ("messages", "tasks", "events"):
+                self._db.execute(f"DELETE FROM {table} WHERE project_id = ?", (pid,))
+            self._db.execute("DELETE FROM projects WHERE id = ?", (pid,))
+            self._db.commit()
+        self.secrets_dir.joinpath(f"{pid}.pat").unlink(missing_ok=True)
+        pdir = self.project_dir(pid)
+        if pdir.is_dir() and not pdir.is_symlink():
+            shutil.rmtree(pdir)
+        return True
+
     def _write_project_json(self, pid: str) -> None:
         p = self.get_project(pid)
-        if not p:
+        if not p or not self.project_dir(pid).is_dir():
             return
         public = {k: v for k, v in p.items() if k not in ("checklist",)}
         (self.project_dir(pid) / "project.json").write_text(json.dumps(public, indent=2), encoding="utf-8")
@@ -211,12 +230,17 @@ class Store:
         return names
 
     # ---------- messages ----------
-    def add_message(self, pid: str, role: str, content: str) -> dict:
-        cur = self._exec(
-            "INSERT INTO messages (project_id, role, content, created_at) VALUES (?, ?, ?, ?)",
-            (pid, role, content, now()),
-        )
-        return self._one("SELECT * FROM messages WHERE id = ?", (cur.lastrowid,))
+    # Background threads (agent turns, the orchestrator) may finish after a project is deleted, so inserts for a
+    # missing project are skipped rather than leaving orphaned rows.
+    def add_message(self, pid: str, role: str, content: str) -> dict | None:
+        with self._lock:
+            if not self.project_exists(pid):
+                return None
+            cur = self._exec(
+                "INSERT INTO messages (project_id, role, content, created_at) VALUES (?, ?, ?, ?)",
+                (pid, role, content, now()),
+            )
+            return self._one("SELECT * FROM messages WHERE id = ?", (cur.lastrowid,))
 
     def list_messages(self, pid: str, limit: int | None = None) -> list[dict]:
         if limit:
@@ -238,14 +262,17 @@ class Store:
         return f"T{row['n'] + 1}"
 
     def create_task(self, pid: str, title: str, body: str, requirement_ids: list[str], depends_on: list[str]) -> dict:
-        key = self.next_task_key(pid)
-        ts = now()
-        self._exec(
-            "INSERT INTO tasks (project_id, key, title, body, requirement_ids, depends_on, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (pid, key, title, body, json.dumps(requirement_ids), json.dumps(depends_on), ts, ts),
-        )
-        return self.get_task(pid, key)
+        with self._lock:
+            if not self.project_exists(pid):
+                raise ValueError("Project not found; it may have been deleted.")
+            key = self.next_task_key(pid)
+            ts = now()
+            self._exec(
+                "INSERT INTO tasks (project_id, key, title, body, requirement_ids, depends_on, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (pid, key, title, body, json.dumps(requirement_ids), json.dumps(depends_on), ts, ts),
+            )
+            return self.get_task(pid, key)
 
     def get_task(self, pid: str, key: str) -> dict | None:
         return self._task(self._one("SELECT * FROM tasks WHERE project_id = ? AND key = ?", (pid, key)))
@@ -263,12 +290,15 @@ class Store:
         return self.get_task(pid, key)
 
     # ---------- events ----------
-    def add_event(self, pid: str, kind: str, message: str, url: str | None = None) -> dict:
-        cur = self._exec(
-            "INSERT INTO events (project_id, kind, message, url, created_at) VALUES (?, ?, ?, ?, ?)",
-            (pid, kind, message, url, now()),
-        )
-        return self._one("SELECT * FROM events WHERE id = ?", (cur.lastrowid,))
+    def add_event(self, pid: str, kind: str, message: str, url: str | None = None) -> dict | None:
+        with self._lock:
+            if not self.project_exists(pid):
+                return None
+            cur = self._exec(
+                "INSERT INTO events (project_id, kind, message, url, created_at) VALUES (?, ?, ?, ?, ?)",
+                (pid, kind, message, url, now()),
+            )
+            return self._one("SELECT * FROM events WHERE id = ?", (cur.lastrowid,))
 
     def list_events(self, pid: str, limit: int = 100) -> list[dict]:
         rows = self._all("SELECT * FROM events WHERE project_id = ? ORDER BY id DESC LIMIT ?", (pid, limit))
